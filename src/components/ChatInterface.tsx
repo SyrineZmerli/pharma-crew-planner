@@ -1,23 +1,26 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Send, Bot, User, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { ChatMessage, getAssistantResponse } from "@/data/pharmacyData";
+import { motion, AnimatePresence } from "framer-motion";
 
-const quickActions = [
-  "Montre le planning",
-  "Prévision de charge",
-  "Absences en cours",
-  "Heures de travail",
-  "Conformité",
-];
+// 1. Définition de l'interface pour corriger l'erreur TypeScript
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+}
 
-export default function ChatInterface() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
+interface ChatInterfaceProps {
+  onActionDetected: (action: string) => void;
+}
+
+export default function ChatInterface({ onActionDetected }: ChatInterfaceProps) {
+  const [messages, setMessages] = useState<Message[]>([
     {
-      id: "welcome",
+      id: "1",
       role: "assistant",
-      content: "👋 Bonjour ! Je suis **PharmaRH**, votre assistant RH intelligent.\n\nJe peux vous aider avec la gestion du planning, les prévisions, les absences et plus encore. Posez-moi une question !",
+      content: "Bonjour ! Je suis votre assistant RH. Je peux générer un **planning**, analyser la **charge de travail** ou noter une **absence**.",
       timestamp: new Date(),
     },
   ]);
@@ -25,109 +28,123 @@ export default function ChatInterface() {
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll vers le bas quand un message arrive
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isTyping]);
 
-  const sendMessage = (text: string) => {
+  const sendMessage = async (text: string) => {
     if (!text.trim()) return;
-    const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", content: text, timestamp: new Date() };
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: text,
+      timestamp: new Date(),
+    };
+
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsTyping(true);
 
-    setTimeout(() => {
-      const response = getAssistantResponse(text);
-      setMessages((prev) => [
-        ...prev,
-        { id: (Date.now() + 1).toString(), role: "assistant", content: response, timestamp: new Date() },
-      ]);
+    try {
+      const response = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // 2. Déclenchement de l'action pour le parent (AssistantPage)
+        if (data.intent) {
+          onActionDetected(data.intent);
+        }
+
+        const botMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: data.content,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, botMsg]);
+      }
+    } catch (error) {
+      console.error("Erreur Chat:", error);
+    } finally {
       setIsTyping(false);
-    }, 800);
+    }
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-6rem)]">
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-auto space-y-4 pb-4">
-        <AnimatePresence>
+    <div className="flex flex-col h-full bg-card overflow-hidden">
+      {/* ZONE DES MESSAGES (Scrollable) */}
+      <div 
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth min-h-0"
+      >
+        <AnimatePresence initial={false}>
           {messages.map((msg) => (
             <motion.div
               key={msg.id}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
-              {msg.role === "assistant" && (
-                <div className="flex-shrink-0 h-8 w-8 rounded-xl accent-gradient flex items-center justify-center">
-                  <Bot className="h-4 w-4 text-accent-foreground" />
+              <div className={`flex gap-3 max-w-[85%] ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
+                  msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted border"
+                }`}>
+                  {msg.role === "user" ? <User size={16} /> : <Bot size={16} />}
                 </div>
-              )}
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${
-                  msg.role === "user"
-                    ? "hero-gradient text-primary-foreground"
-                    : "glass-card"
-                }`}
-              >
-                <div className="prose prose-sm max-w-none [&_table]:text-xs [&_th]:p-1.5 [&_td]:p-1.5 [&_p]:my-1 [&_strong]:text-foreground">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                
+                <div className={`p-3 rounded-2xl text-sm shadow-sm ${
+                  msg.role === "user" 
+                    ? "bg-primary text-primary-foreground rounded-tr-none" 
+                    : "bg-background border rounded-tl-none"
+                }`}>
+                  {/* Utilisation de ReactMarkdown pour les tableaux et le gras */}
+                  <div className="prose prose-sm dark:prose-invert max-w-none">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                  <span className="text-[10px] opacity-50 mt-1 block">
+                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
                 </div>
               </div>
-              {msg.role === "user" && (
-                <div className="flex-shrink-0 h-8 w-8 rounded-xl bg-secondary flex items-center justify-center">
-                  <User className="h-4 w-4 text-secondary-foreground" />
-                </div>
-              )}
             </motion.div>
           ))}
         </AnimatePresence>
-
+        
         {isTyping && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
-            <div className="h-8 w-8 rounded-xl accent-gradient flex items-center justify-center">
-              <Bot className="h-4 w-4 text-accent-foreground" />
-            </div>
-            <div className="glass-card rounded-2xl px-4 py-3">
-              <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                  <span key={i} className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-pulse" style={{ animationDelay: `${i * 200}ms` }} />
-                ))}
-              </div>
-            </div>
-          </motion.div>
+          <div className="flex gap-2 p-2">
+            <Sparkles className="animate-pulse text-primary h-4 w-4" />
+            <span className="text-xs text-muted-foreground italic">L'IA analyse vos données...</span>
+          </div>
         )}
       </div>
 
-      {/* Quick actions */}
-      <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-hide">
-        {quickActions.map((action) => (
+      {/* ZONE DE SAISIE (Fixée en bas) */}
+      <div className="p-4 border-t bg-card/80 backdrop-blur-md">
+        <div className="flex gap-2 max-w-4xl mx-auto items-center bg-background border rounded-2xl p-1.5 shadow-inner">
+          <input
+            className="flex-1 bg-transparent px-3 py-2 text-sm focus:outline-none"
+            placeholder="Écrivez un message..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
+          />
           <button
-            key={action}
-            onClick={() => sendMessage(action)}
-            className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
+            onClick={() => sendMessage(input)}
+            disabled={!input.trim() || isTyping}
+            className="p-2.5 bg-primary text-primary-foreground rounded-xl hover:opacity-90 disabled:opacity-40 transition-all"
           >
-            {action}
+            <Send size={18} />
           </button>
-        ))}
-      </div>
-
-      {/* Input */}
-      <div className="glass-card rounded-2xl flex items-center gap-2 p-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
-          placeholder="Posez une question à l'assistant RH..."
-          className="flex-1 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-        />
-        <button
-          onClick={() => sendMessage(input)}
-          disabled={!input.trim()}
-          className="p-2.5 rounded-xl accent-gradient text-accent-foreground disabled:opacity-40 transition-opacity hover:shadow-glow"
-        >
-          <Send className="h-4 w-4" />
-        </button>
+        </div>
       </div>
     </div>
   );
